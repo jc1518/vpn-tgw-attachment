@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Create VPN connections and attach them to TGW
+
+Parameters:
+  TransitGatewayId:
+    Description: The TGW ID
+    Type: String
+
+  TransitGatewayRouteTableId:
+    Description: The TGW route table ID
+    Type: String
+
+  PrimaryPopIp:
+    Description: The IP address of primary PoP
+    Type: String
+
+  FailoverPopIp:
+    Description: The IP address of failover PoP
+    Type: String
+
+  ArtifactBucket:
+    Description: The S3 Bucket name holding the Lambda deployment artifacts
+    Type: String
+
+  LambdaArtifactKey:
+    Description: The S3 key for the artifact to use for the Custom Resource Lambda
+    Type: String
+
+Resources:
+  PrimaryPop:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65000
+      IpAddress: !Ref PrimaryPopIp
+      Tags:
+        - Key: Name
+          Value: Primary PoP
+
+  FailoverPop:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65000
+      IpAddress: !Ref FailoverPopIp
+      Tags:
+        - Key: Name
+          Value: Failover PoP
+
+  PrimaryPopVpn:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      CustomerGatewayId: !Ref PrimaryPop
+      StaticRoutesOnly: true
+      TransitGatewayId: !Ref TransitGatewayId
+      Type: ipsec.1
+      Tags:
+        - Key: Name
+          Value: Primary PoP VPN connection
+
+  FailoverPopVpn:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      CustomerGatewayId: !Ref FailoverPop
+      StaticRoutesOnly: true
+      TransitGatewayId: !Ref TransitGatewayId
+      Type: ipsec.1
+      Tags:
+        - Key: Name
+          Value: Failover PoP VPN connection
+
+  TgwAttachmentIdFinderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-TgwAttachmentIdFinderRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: TgwAttachmentIdFinderPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DescribeTransitGatewayAttachments
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListTags
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                Resource: "*"
+
+  TgwAttachmentIdFinderLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "Custom Resource Lambda used to find TGW attachment ID for VPN"
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      Handler: vpn_tgw_attachment_id_finder.lambda_handler
+      Role: !GetAtt TgwAttachmentIdFinderRole.Arn
+      Runtime: python3.9
+      Timeout: 300
+
+  PrimaryPopVpnTgwAttachmentId:
+    Type: Custom::CustomResource
+    Properties:
+      ServiceToken: !GetAtt TgwAttachmentIdFinderLambda.Arn
+      vpn_id: !Ref PrimaryPopVpn
+      attachment_name: PrimaryPopVpn
+
+  FailoverPopVpnTgwAttachmentId:
+    Type: Custom::CustomResource
+    Properties:
+      ServiceToken: !GetAtt TgwAttachmentIdFinderLambda.Arn
+      vpn_id: !Ref FailoverPopVpn
+      attachment_name: FailoverPopVpn
+
+  PrimaryPopVpnRouteTableAssociation:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !GetAtt
+        - PrimaryPopVpnTgwAttachmentId
+        - TransitGatewayAttachmentId
+      TransitGatewayRouteTableId: !Ref TransitGatewayRouteTableId
+
+  FailoverPopVpnRouteTableAssociation:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !GetAtt
+        - FailoverPopVpnTgwAttachmentId
+        - TransitGatewayAttachmentId
+      TransitGatewayRouteTableId: !Ref TransitGatewayRouteTableId
+
+Outputs:
+  PrimaryPopCusomterGatewayId:
+    Description: Primary PoP customer gateway ID
+    Value: !Ref PrimaryPop
+    Export:
+      Name: PrimaryPopCusomterGatewayId
+
+  FailoverPopCusomterGatewayId:
+    Description: Failover PoP customer gateway ID
+    Value: !Ref FailoverPop
+    Export:
+      Name: FailoverPopCusomterGatewayId
+
+  PrimaryPopVpnId:
+    Description: Primary PoP VPN ID
+    Value: !Ref PrimaryPopVpn
+    Export:
+      Name: PrimaryPopVpnId
+
+  FailoverPopVpnId:
+    Description: Failover PoP VPN ID
+    Value: !Ref FailoverPopVpn
+    Export:
+      Name: FailoverPopVpnId
