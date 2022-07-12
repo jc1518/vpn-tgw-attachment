@@ -173,3 +173,19 @@ Outputs:
     Value: !Ref FailoverPopVpn
     Export:
       Name: FailoverPopVpnId
+
+  PrimaryPopVpnTgwAttachmentId:
+    Description: Primary PoP VPN TGW attachment ID
+    Value: !GetAtt
+      - PrimaryPopVpnTgwAttachmentId
+      - TransitGatewayAttachmentId
+    Export:
+      Name: PrimaryPopVpnTgwAttachmentId
+
+  FailoverPopVpnTgwAttachmentId:
+    Description: Failover PoP VPN TGW attachment ID
+    Value: !GetAtt
+      - FailoverPopVpnTgwAttachmentId
+      - TransitGatewayAttachmentId
+    Export:
+      Name: FailoverPopVpnTgwAttachmentId
